@@ -20,16 +20,18 @@ public class Config {
     private static ArrayList<String> configSamplePorts;
     public Config() {
         Yaml yaml = new Yaml();
-        InputStream inputStream = null;
-        try {
-            logger.info((System.getProperty("user.dir")));
-            String filePath;
-//            String filePath = System.getProperty("user.dir");
-            filePath = "/sample-apps/spark/src/main/java/com/amazon/sampleapp/config.yaml";
-            inputStream = new FileInputStream(filePath);
-        } catch (FileNotFoundException e) {
-            throw new RuntimeException(e);
-        }
+//        InputStream inputStream = null;
+//        try {
+//            logger.info((System.getProperty("user.dir")));
+//            inputStream = getClass().getResourceAsStream("/config.yaml");
+////            String filePath;
+////            String filePath = System.getProperty("user.dir");
+////            filePath = "./config.yaml";
+////            inputStream = new FileInputStream(filePath);
+//        } catch (FileNotFoundException e) {
+//            throw new RuntimeException(e);
+//        }
+        InputStream inputStream = getClass().getResourceAsStream("/config.yaml");
         logger.info("Reading in config file");
         Map<String, Object> variables = yaml.load(inputStream);
         configHost = (String) variables.get("Host");
