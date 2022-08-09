@@ -13,6 +13,8 @@ dependencies {
   implementation("org.apache.logging.log4j:log4j-core")
   implementation("software.amazon.awssdk:s3")
   implementation("software.amazon.awssdk:sts")
+  implementation("org.yaml:snakeyaml:1.8")
+
 
   runtimeOnly("org.apache.logging.log4j:log4j-slf4j-impl")
 }
@@ -24,20 +26,20 @@ application {
 jib {
   to {
     image = "public.ecr.aws/aws-otel-test/aws-otel-java-spark"
-    tags = setOf("latest", "${System.getenv("COMMIT_HASH")}")
+    tags = setOf("latest", "test-spark")
   }
   from {
     image = "public.ecr.aws/aws-otel-test/aws-opentelemetry-java-base:alpha"
-    platforms {
-      platform {
-        architecture = "amd64"
-        os = "linux"
-      }
-      platform {
-        architecture = "arm64"
-        os = "linux"
-      }
-    }
+//    platforms {
+//      platform {
+//        architecture = "amd64"
+//        os = "linux"
+//      }
+//      platform {
+//        architecture = "arm64"
+//        os = "linux"
+//      }
+//    }
   }
 }
 

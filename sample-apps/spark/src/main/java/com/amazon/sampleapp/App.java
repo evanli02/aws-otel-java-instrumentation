@@ -13,21 +13,27 @@ import okhttp3.Response;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import software.amazon.awssdk.services.s3.S3Client;
+import java.util.ArrayList;
 
-public class App {
+public class App extends Thread {
   private static final Logger logger = LogManager.getLogger();
   private static final boolean shouldSampleAppLog =
       System.getenv().getOrDefault("SAMPLE_APP_LOG_LEVEL", "INFO").equals("INFO");
 
   static final String REQUEST_START_TIME = "requestStartTime";
-  static int mimicQueueSize;
 
   private static MetricEmitter buildMetricEmitter() {
     return new MetricEmitter();
   }
 
+  private static Config getConfig() { return new Config(); }
+  static boolean threadActive = false;
+  static String randApiName;
+  static String randStatusCode;
+
   public static void main(String[] args) {
     MetricEmitter metricEmitter = buildMetricEmitter();
+    Config config = getConfig();
     final Call.Factory httpClient = new OkHttpClient();
     final S3Client s3 = S3Client.builder().build();
     String port;
@@ -35,14 +41,17 @@ public class App {
     String listenAddress = System.getenv("LISTEN_ADDRESS");
 
     if (listenAddress == null) {
-      host = "127.0.0.1";
-      port = "4567";
+//      host = "127.0.0.1";
+//      port = "4567";
+        logger.info(config.getHost());
+        host = config.getHost();
+        port = config.getPort();
     } else {
       String[] splitAddress = listenAddress.split(":");
       host = splitAddress[0];
       port = splitAddress[1];
     }
-
+    logger.info("dead");
     // set sampleapp app port number and ip address
     port(Integer.parseInt(port));
     ipAddress(host);
@@ -50,6 +59,13 @@ public class App {
     get(
         "/",
         (req, res) -> {
+          if(!threadActive) {
+              randApiName = req.pathInfo();
+              randStatusCode = String.valueOf(res.status());
+              App thread = new App();
+              threadActive = true;
+              thread.start();
+          }
           return "healthcheck";
         });
 
@@ -57,6 +73,13 @@ public class App {
     get(
         "/outgoing-http-call",
         (req, res) -> {
+            if(!threadActive) {
+                randApiName = req.pathInfo();
+                randStatusCode = String.valueOf(res.status());
+                App thread = new App();
+                threadActive = true;
+                thread.start();
+            }
           if (shouldSampleAppLog) {
             logger.info("Executing outgoing-http-call");
           }
@@ -76,6 +99,13 @@ public class App {
     get(
         "/aws-sdk-call",
         (req, res) -> {
+            if(!threadActive) {
+                randApiName = req.pathInfo();
+                randStatusCode = String.valueOf(res.status());
+                App thread = new App();
+                threadActive = true;
+                thread.start();
+            }
           if (shouldSampleAppLog) {
             logger.info("Executing aws-sdk-all");
           }
@@ -84,6 +114,37 @@ public class App {
 
           return getXrayTraceId();
         });
+
+    /** sample app request */
+    get(
+            "/outgoing-sampleapp",
+            (req, res) -> {
+                if (shouldSampleAppLog) {
+                    logger.info("Executing outgoing-sampleapp call");
+                }
+                ArrayList<String> samplePorts = config.getSamplePorts();
+                if (config.getSamplePorts().isEmpty()) {
+                    try (Response response =
+                                 httpClient
+                                         .newCall(new Request.Builder().url("https://aws.amazon.com").build())
+                                         .execute()) {
+                    } catch (IOException e) {
+                        throw new UncheckedIOException("Could not fetch endpoint", e);
+                    }
+                }
+                else {
+                    for (String i : samplePorts) {
+                        try (Response response =
+                                     httpClient
+                                             .newCall(new Request.Builder().url("localhost:" + i).build())
+                                             .execute()) {
+                        } catch (IOException e) {
+                            throw new UncheckedIOException("Could not fetch endpoint", e);
+                        }
+                    }
+                }
+                return getXrayTraceId();
+            });
 
     /** record a start time for each request */
     before(
@@ -98,17 +159,14 @@ public class App {
             String statusCode = String.valueOf(res.status());
             // calculate return time
             Long requestStartTime = req.attribute(REQUEST_START_TIME);
-            metricEmitter.emitReturnTimeMetric(
+            logger.info("Start time: " + requestStartTime);
+            metricEmitter.emitApiLatencyMetric(
                 System.currentTimeMillis() - requestStartTime, req.pathInfo(), statusCode);
-
-            // emit http request load size
-            int loadSize = req.contentLength() + mimicPayloadSize();
-            metricEmitter.emitBytesSentMetric(loadSize, req.pathInfo(), statusCode);
-            metricEmitter.updateTotalBytesSentMetric(loadSize, req.pathInfo(), statusCode);
-            // mimic a queue size reporter
-            int queueSizeChange = mimicQueueSizeChange();
-            metricEmitter.emitQueueSizeChangeMetric(queueSizeChange, req.pathInfo(), statusCode);
-            metricEmitter.updateActualQueueSizeMetric(queueSizeChange, req.pathInfo(), statusCode);
+//
+//            // emit http request load size
+              int mimicBytes = mimicBytesSent();
+              metricEmitter.emitBytesSentMetric(mimicBytes, req.pathInfo(), statusCode);
+              metricEmitter.emitApiRequestsMetric(req.pathInfo(), statusCode);
           }
         });
 
@@ -120,6 +178,21 @@ public class App {
         });
   }
 
+  public void run() {
+      MetricEmitter metricEmitter = buildMetricEmitter();
+      Config config = getConfig();
+      while(true) {
+          metricEmitter.emitTimeAliveMetric(randApiName, randStatusCode);
+          metricEmitter.emitHeapSizeMetric(mimicHeapSize(), randApiName, randStatusCode);
+          metricEmitter.emitActiveThreadsMetric(mimicActiveThreads(), randApiName, randStatusCode);
+          metricEmitter.emitCpuUsageMetric(mimicCpuUsage(), randApiName, randStatusCode);
+          try {
+              Thread.sleep(1000 * config.getInterval());
+          } catch (InterruptedException e) {
+              throw new RuntimeException(e);
+          }
+      }
+  }
   // get x-ray trace id
   private static String getXrayTraceId() {
     String traceId = Span.current().getSpanContext().getTraceId();
@@ -128,14 +201,26 @@ public class App {
     return String.format("{\"traceId\": \"%s\"}", xrayTraceId);
   }
 
-  private static int mimicPayloadSize() {
-    return ThreadLocalRandom.current().nextInt(100);
+  private static int mimicBytesSent() {
+      int generatedBytes = ThreadLocalRandom.current().nextInt(100);
+      return generatedBytes;
   }
 
-  private static int mimicQueueSizeChange() {
-    int newQueueSize = ThreadLocalRandom.current().nextInt(100);
-    int queueSizeChange = newQueueSize - mimicQueueSize;
-    mimicQueueSize = newQueueSize;
-    return queueSizeChange;
+  private static int mimicHeapSize() {
+      Config config = getConfig();
+      int generatedHeapSize = ThreadLocalRandom.current().nextInt(config.getHeap());
+      return generatedHeapSize;
+  }
+
+  private static int mimicActiveThreads() {
+      Config config = getConfig();
+      int generatedThreads = ThreadLocalRandom.current().nextInt(config.getThreads());
+      return generatedThreads;
+  }
+
+  private static long mimicCpuUsage() {
+      Config config = getConfig();
+      long generatedCpu = ThreadLocalRandom.current().nextLong(config.getCpu());
+      return generatedCpu;
   }
 }
